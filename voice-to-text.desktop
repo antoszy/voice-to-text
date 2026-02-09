@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Voice to Text
+Comment=Speech-to-text with whisper.cpp, activated by double-Alt
+Exec=voice-to-text --minimized
+Icon=voice-to-text
+Terminal=false
+Categories=Utility;Audio;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
