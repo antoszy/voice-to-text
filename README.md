@@ -4,6 +4,13 @@ Speech-to-text desktop app using [whisper.cpp](https://github.com/ggerganov/whis
 
 **Double-press Alt** to start/stop recording. Transcribed text is automatically typed into the active text field.
 
+## Modes
+
+- **Streaming** (default) — text appears in real-time as you speak (~6s latency). Whisper re-transcribes the full audio every 3 seconds, confirmed text is typed incrementally.
+- **Batch** — records until you double-press Alt again, then transcribes the entire recording at once.
+
+Switch between modes in the Settings window (tray menu → Settings).
+
 ## Requirements
 
 - Linux with X11 (GNOME, KDE, etc.)
@@ -34,9 +41,9 @@ scripts/install.sh
 # 1. Download whisper model (~1.6 GB)
 scripts/download-model.sh
 
-# 2. Build
+# 2. Build (with CUDA for NVIDIA GPUs)
 cd src-tauri
-cargo build --release
+CMAKE_CUDA_ARCHITECTURES="90-virtual" cargo build --release
 
 # 3. Run
 ./target/release/voice-to-text
@@ -46,14 +53,16 @@ cargo build --release
 
 | Action | Effect |
 |---|---|
-| Double-press **Alt** | Start/stop recording |
-| Click tray icon | Show/hide settings window |
-| Right-click tray | Menu (Show/Quit) |
+| Double-press **Alt** | Start recording |
+| Double-press **Alt** again | Stop recording (+ transcribe in batch mode) |
+| Tray menu → **Settings** | Open settings (mode, language) |
+| Tray menu → **Quit** | Exit app |
 
-The app runs in the system tray. When recording stops, audio is transcribed and the result is pasted into the currently focused text field.
+The app runs in the system tray. In streaming mode, text is typed into the focused field as you speak. In batch mode, text is typed after you stop recording.
 
 ## Configuration
 
+- **Mode**: Streaming (real-time) or Batch (after stop)
 - **Language**: Polish (default), English, German, Ukrainian, or auto-detect
 - **Model**: whisper large-v3-turbo (stored in `~/.local/share/voice-to-text/models/`)
 
@@ -61,8 +70,8 @@ The app runs in the system tray. When recording stops, audio is transcribed and 
 
 ```
 src-tauri/src/
-  lib.rs          — Tauri app setup, state management, tray
-  audio.rs        — Microphone recording (cpal)
+  lib.rs          — Tauri app, worker thread, streaming/batch logic, tray
+  audio.rs        — Microphone recording + snapshot for streaming (cpal)
   transcribe.rs   — Whisper.cpp transcription (whisper-rs + CUDA)
   hotkey.rs       — Double-Alt detection (rdev)
   typing.rs       — Text insertion (xclip + xdotool)
