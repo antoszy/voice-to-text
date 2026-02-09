@@ -5,6 +5,7 @@ const ring = document.getElementById("status-ring");
 const statusText = document.getElementById("status-text");
 const modelWarning = document.getElementById("model-warning");
 const langSelect = document.getElementById("lang-select");
+const modeSelect = document.getElementById("mode-select");
 
 const STATUS_MAP = {
   idle: { class: "idle", text: "Gotowy" },
@@ -18,6 +19,17 @@ function updateUI(status) {
   statusText.textContent = s.text;
 }
 
+async function saveSettings() {
+  const settings = await invoke("get_settings");
+  settings.language = langSelect.value;
+  settings.mode = modeSelect.value;
+  try {
+    await invoke("update_settings", { settings });
+  } catch (e) {
+    console.error("Settings error:", e);
+  }
+}
+
 async function init() {
   const hasModel = await invoke("check_model");
   if (!hasModel) {
@@ -26,36 +38,23 @@ async function init() {
 
   const settings = await invoke("get_settings");
   langSelect.value = settings.language;
+  modeSelect.value = settings.mode;
 
   const status = await invoke("get_status");
   updateUI(status);
 
-  await listen("status-changed", (event) => {
-    updateUI(event.payload);
-  });
-
+  await listen("status-changed", (event) => updateUI(event.payload));
   await listen("error", (event) => {
     statusText.textContent = event.payload;
     setTimeout(() => updateUI("idle"), 3000);
   });
 
   ring.addEventListener("click", async () => {
-    try {
-      await invoke("toggle_recording");
-    } catch (e) {
-      console.error("Toggle error:", e);
-    }
+    try { await invoke("toggle_recording"); } catch (e) { console.error(e); }
   });
 
-  langSelect.addEventListener("change", async () => {
-    const settings = await invoke("get_settings");
-    settings.language = langSelect.value;
-    try {
-      await invoke("update_settings", { settings });
-    } catch (e) {
-      console.error("Settings error:", e);
-    }
-  });
+  langSelect.addEventListener("change", saveSettings);
+  modeSelect.addEventListener("change", saveSettings);
 }
 
 init();

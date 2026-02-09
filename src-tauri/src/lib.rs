@@ -27,10 +27,18 @@ pub enum AppStatus {
     Transcribing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscribeMode {
+    Streaming,
+    Batch,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub model_path: String,
     pub language: String,
+    pub mode: TranscribeMode,
 }
 
 impl Default for Settings {
@@ -40,6 +48,7 @@ impl Default for Settings {
                 .to_string_lossy()
                 .to_string(),
             language: "pl".to_string(),
+            mode: TranscribeMode::Streaming,
         }
     }
 }
@@ -107,6 +116,10 @@ fn get_language(app: &AppHandle) -> String {
     app.state::<AppState>().settings.lock().language.clone()
 }
 
+fn get_mode(app: &AppHandle) -> TranscribeMode {
+    app.state::<AppState>().settings.lock().mode
+}
+
 fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
     let model_path = {
         let st = app.state::<AppState>();
@@ -136,9 +149,10 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
 
     loop {
         let is_recording = recorder.is_some();
+        let is_streaming = is_recording && get_mode(&app) == TranscribeMode::Streaming;
 
-        // Idle: block on recv(). Recording: timeout every STREAM_INTERVAL for transcription tick.
-        let cmd_result = if is_recording {
+        // Idle/Batch: block on recv(). Streaming: timeout for transcription ticks.
+        let cmd_result = if is_streaming {
             rx.recv_timeout(STREAM_INTERVAL)
         } else {
             rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
@@ -280,14 +294,22 @@ fn toggle_window(app: &AppHandle) {
             let _ = w.set_focus();
         }
     } else {
-        // Create window on demand (avoids GBM buffer crash on hidden startup)
         let builder = WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/index.html".into()))
             .title("Voice to Text")
             .inner_size(420.0, 520.0)
             .resizable(false)
             .center();
         match builder.build() {
-            Ok(_) => log::info!("Settings window created"),
+            Ok(w) => {
+                let w_hide = w.clone();
+                w.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = w_hide.hide();
+                    }
+                });
+                log::info!("Settings window created");
+            }
             Err(e) => log::error!("Failed to create window: {e}"),
         }
     }
