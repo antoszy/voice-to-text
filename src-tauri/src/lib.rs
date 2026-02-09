@@ -6,7 +6,8 @@ mod typing;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Duration;
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -14,6 +15,9 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 use tauri_plugin_autostart::MacosLauncher;
+
+const STREAM_INTERVAL: Duration = Duration::from_secs(3);
+const MIN_AUDIO_SAMPLES: usize = 16_000; // 1 second at 16kHz
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,13 +44,11 @@ impl Default for Settings {
     }
 }
 
-// Commands sent to the worker thread (owns non-Send types)
 enum WorkerCmd {
     Toggle,
     UpdateSettings(Settings),
 }
 
-// Tauri-managed state — all fields are Send + Sync
 pub struct AppState {
     status: Mutex<AppStatus>,
     settings: Mutex<Settings>,
@@ -82,7 +84,28 @@ fn toggle_recording(state: tauri::State<'_, AppState>) {
     let _ = state.cmd_tx.lock().send(WorkerCmd::Toggle);
 }
 
-// --- Worker thread: owns AudioRecorder + Transcriber (non-Send) ---
+// --- Streaming worker ---
+
+/// Find byte length of the common prefix between two strings.
+fn stable_prefix_len(a: &str, b: &str) -> usize {
+    let mut len = 0;
+    for (ca, cb) in a.chars().zip(b.chars()) {
+        if ca != cb {
+            break;
+        }
+        len += ca.len_utf8();
+    }
+    len
+}
+
+fn set_status(app: &AppHandle, status: AppStatus) {
+    *app.state::<AppState>().status.lock() = status;
+    let _ = app.emit("status-changed", status);
+}
+
+fn get_language(app: &AppHandle) -> String {
+    app.state::<AppState>().settings.lock().language.clone()
+}
 
 fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
     let model_path = {
@@ -108,14 +131,26 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
     };
 
     let mut recorder: Option<audio::AudioRecorder> = None;
+    let mut prev_text = String::new();
+    let mut typed_len: usize = 0;
 
-    while let Ok(cmd) = rx.recv() {
-        match cmd {
-            WorkerCmd::Toggle => {
+    loop {
+        let is_recording = recorder.is_some();
+
+        // Idle: block on recv(). Recording: timeout every STREAM_INTERVAL for transcription tick.
+        let cmd_result = if is_recording {
+            rx.recv_timeout(STREAM_INTERVAL)
+        } else {
+            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
+
+        match cmd_result {
+            Ok(WorkerCmd::Toggle) => {
                 let status = *app.state::<AppState>().status.lock();
 
                 match status {
                     AppStatus::Idle => {
+                        // Start recording + streaming
                         match audio::AudioRecorder::new() {
                             Ok(mut rec) => {
                                 if let Err(e) = rec.start() {
@@ -124,8 +159,10 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
                                     continue;
                                 }
                                 recorder = Some(rec);
-                                *app.state::<AppState>().status.lock() = AppStatus::Recording;
-                                let _ = app.emit("status-changed", AppStatus::Recording);
+                                prev_text.clear();
+                                typed_len = 0;
+                                set_status(&app, AppStatus::Recording);
+                                log::info!("Streaming started");
                             }
                             Err(e) => {
                                 log::error!("Recorder init failed: {e}");
@@ -134,42 +171,85 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
                         }
                     }
                     AppStatus::Recording => {
-                        let samples = match recorder.as_mut() {
-                            Some(rec) => rec.stop(),
-                            None => continue,
-                        };
-                        recorder = None;
+                        // Stop — final transcription pass
+                        set_status(&app, AppStatus::Transcribing);
 
-                        *app.state::<AppState>().status.lock() = AppStatus::Transcribing;
-                        let _ = app.emit("status-changed", AppStatus::Transcribing);
+                        if let Some(ref mut rec) = recorder {
+                            let audio = rec.snapshot();
+                            rec.stop();
 
-                        let language = app.state::<AppState>().settings.lock().language.clone();
-
-                        if let Some(ref t) = transcriber {
-                            match t.transcribe(&samples, &language) {
-                                Ok(text) => {
-                                    log::info!("Transcribed: {text}");
-                                    if let Err(e) = typing::type_text(&text) {
-                                        log::error!("Typing failed: {e}");
-                                        let _ = app.emit("error", e.to_string());
+                            if audio.len() >= MIN_AUDIO_SAMPLES {
+                                let language = get_language(&app);
+                                if let Some(ref t) = transcriber {
+                                    match t.transcribe(&audio, &language) {
+                                        Ok(text) => {
+                                            log::info!("Final transcription: {text}");
+                                            if text.len() > typed_len {
+                                                let remaining = &text[typed_len..];
+                                                if !remaining.is_empty() {
+                                                    let _ = typing::type_text(remaining);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Final transcription failed: {e}");
+                                            let _ = app.emit("error", e.to_string());
+                                        }
                                     }
                                 }
-                                Err(e) => {
-                                    log::error!("Transcription failed: {e}");
-                                    let _ = app.emit("error", e.to_string());
-                                }
                             }
-                        } else {
-                            let _ = app.emit("error", "Model not loaded".to_string());
                         }
 
-                        *app.state::<AppState>().status.lock() = AppStatus::Idle;
-                        let _ = app.emit("status-changed", AppStatus::Idle);
+                        recorder = None;
+                        prev_text.clear();
+                        typed_len = 0;
+                        set_status(&app, AppStatus::Idle);
+                        log::info!("Streaming stopped");
                     }
-                    AppStatus::Transcribing => {} // ignore while transcribing
+                    AppStatus::Transcribing => {}
                 }
             }
-            WorkerCmd::UpdateSettings(settings) => {
+
+            Err(RecvTimeoutError::Timeout) => {
+                // Streaming transcription tick
+                let audio = match recorder.as_ref() {
+                    Some(rec) => rec.snapshot(),
+                    None => continue,
+                };
+
+                if audio.len() < MIN_AUDIO_SAMPLES {
+                    continue;
+                }
+
+                let language = get_language(&app);
+
+                if let Some(ref t) = transcriber {
+                    match t.transcribe(&audio, &language) {
+                        Ok(curr_text) => {
+                            // Only type text confirmed by two consecutive transcriptions
+                            let stable = stable_prefix_len(&prev_text, &curr_text);
+
+                            if stable > typed_len {
+                                let new_text = &curr_text[typed_len..stable];
+                                if !new_text.is_empty() {
+                                    log::info!("Streaming chunk: {new_text:?}");
+                                    let _ = typing::type_text(new_text);
+                                    typed_len = stable;
+                                }
+                            }
+
+                            prev_text = curr_text;
+                        }
+                        Err(e) => {
+                            log::error!("Streaming transcription failed: {e}");
+                        }
+                    }
+                } else {
+                    let _ = app.emit("error", "Model not loaded".to_string());
+                }
+            }
+
+            Ok(WorkerCmd::UpdateSettings(settings)) => {
                 let new_path = PathBuf::from(&settings.model_path);
                 if new_path.exists() {
                     match transcribe::Transcriber::new(&new_path) {
@@ -181,6 +261,8 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
                     }
                 }
             }
+
+            Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -246,11 +328,9 @@ pub fn run() {
         .setup(move |app| {
             setup_tray(app.handle())?;
 
-            // Worker thread — owns AudioRecorder + Transcriber
             let worker_handle = app.handle().clone();
             std::thread::spawn(move || run_worker(cmd_rx, worker_handle));
 
-            // Hotkey listener → forwards double-Alt to worker
             let hotkey_tx = cmd_tx.clone();
             let (htx, hrx) = mpsc::channel();
             hotkey::start_listener(htx);
@@ -260,7 +340,6 @@ pub fn run() {
                 }
             });
 
-            // Start hidden (tray-only)
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.hide();
             }

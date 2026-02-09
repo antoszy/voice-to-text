@@ -86,6 +86,16 @@ impl AudioRecorder {
         Ok(())
     }
 
+    /// Snapshot current audio buffer (for streaming) — returns 16kHz mono f32.
+    pub fn snapshot(&self) -> Vec<f32> {
+        let raw = self.samples.lock().unwrap().clone();
+        if self.device_sample_rate == TARGET_SAMPLE_RATE {
+            raw
+        } else {
+            resample(&raw, self.device_sample_rate, TARGET_SAMPLE_RATE)
+        }
+    }
+
     /// Stop recording and return 16kHz mono f32 samples.
     pub fn stop(&mut self) -> Vec<f32> {
         self.stream.take(); // drops the stream, stopping recording
