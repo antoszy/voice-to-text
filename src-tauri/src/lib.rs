@@ -339,6 +339,9 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 // --- App entry ---
 
 pub fn run() {
+    // Work around GBM/DRM permission errors with NVIDIA + WebKitGTK
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let (cmd_tx, cmd_rx) = mpsc::channel();
