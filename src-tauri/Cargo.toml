@@ -5,7 +5,7 @@ edition = "2021"
 description = "Speech-to-text using whisper.cpp with double-Alt hotkey"
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 whisper-rs = "0.14"
 cpal = "0.15"
