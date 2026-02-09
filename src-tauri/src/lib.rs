@@ -269,8 +269,32 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
 
 // --- System tray ---
 
+fn toggle_window(app: &AppHandle) {
+    use tauri::WebviewWindowBuilder;
+
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_visible().unwrap_or(false) {
+            let _ = w.hide();
+        } else {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    } else {
+        // Create window on demand (avoids GBM buffer crash on hidden startup)
+        let builder = WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/index.html".into()))
+            .title("Voice to Text")
+            .inner_size(420.0, 520.0)
+            .resizable(false)
+            .center();
+        match builder.build() {
+            Ok(_) => log::info!("Settings window created"),
+            Err(e) => log::error!("Failed to create window: {e}"),
+        }
+    }
+}
+
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show / Hide").build(app)?;
+    let show = MenuItemBuilder::with_id("show", "Settings").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
     let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
@@ -281,16 +305,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .menu(&menu)
         .tooltip("Voice to Text — Double-press Alt")
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
-                }
-            }
+            "show" => toggle_window(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -339,10 +354,6 @@ pub fn run() {
                     let _ = hotkey_tx.send(WorkerCmd::Toggle);
                 }
             });
-
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.hide();
-            }
 
             Ok(())
         })

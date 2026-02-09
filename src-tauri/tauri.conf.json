@@ -8,18 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "Voice to Text",
-        "width": 420,
-        "height": 520,
-        "resizable": false,
-        "center": true,
-        "visible": false,
-        "decorations": true,
-        "transparent": false
-      }
-    ],
+    "windows": [],
     "trayIcon": {
       "iconPath": "icons/icon.png",
       "iconAsTemplate": false,
