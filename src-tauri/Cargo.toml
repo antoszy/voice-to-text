@@ -7,7 +7,7 @@ description = "Speech-to-text using whisper.cpp with double-Alt hotkey"
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
-whisper-rs = "0.14"
+whisper-rs = { version = "0.14", features = ["cuda"] }
 cpal = "0.15"
 rdev = "0.5"
 serde = { version = "1", features = ["derive"] }
