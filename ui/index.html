@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice to Text</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="status-ring" class="idle">
+      <svg id="mic-icon" viewBox="0 0 24 24" width="64" height="64">
+        <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor"/>
+        <path d="M5 11v1a7 7 0 0014 0v-1" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <line x1="9" y1="22" x2="15" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <p id="status-text">Gotowy</p>
+    <p id="hint">Podwójne wciśnięcie Alt — nagrywanie</p>
+
+    <div id="model-warning" class="hidden">
+      <p>Model nie znaleziony. Uruchom:</p>
+      <code>scripts/download-model.sh</code>
+    </div>
+
+    <div id="settings">
+      <label>
+        Język:
+        <select id="lang-select">
+          <option value="pl" selected>Polski</option>
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+          <option value="uk">Українська</option>
+          <option value="auto">Auto-detect</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>
