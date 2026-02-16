@@ -194,7 +194,7 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
 
                             if audio.len() >= MIN_AUDIO_SAMPLES {
                                 let language = get_language(&app);
-                                if let Some(ref t) = transcriber {
+                                if let Some(ref mut t) = transcriber {
                                     match t.transcribe(&audio, &language) {
                                         Ok(text) => {
                                             log::info!("Final transcription: {text}");
@@ -237,7 +237,7 @@ fn run_worker(rx: mpsc::Receiver<WorkerCmd>, app: AppHandle) {
 
                 let language = get_language(&app);
 
-                if let Some(ref t) = transcriber {
+                if let Some(ref mut t) = transcriber {
                     match t.transcribe(&audio, &language) {
                         Ok(curr_text) => {
                             // Only type text confirmed by two consecutive transcriptions
